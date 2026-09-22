@@ -32,6 +32,7 @@ export default function Mesh3DCanvas() {
     const vertexShader = `
       uniform float uTime;
       uniform vec2 uMouse;
+      uniform float uScroll;
       varying vec2 vUv;
       varying float vElevation;
       varying vec3 vNormal;
@@ -114,16 +115,17 @@ export default function Mesh3DCanvas() {
         vNormal = normal;
         vec3 pos = position;
 
-        // Wave elevation combining multi-frequency perlin noise
-        float noiseA = cnoise(vec3(pos.x * 0.35 + uTime * 0.12, pos.y * 0.35 + uTime * 0.08, uTime * 0.05));
+        // Wave elevation combining multi-frequency perlin noise + scroll influence
+        float speed = 0.12 + uScroll * 0.15;
+        float noiseA = cnoise(vec3(pos.x * 0.35 + uTime * speed, pos.y * 0.35 + uTime * 0.08, uTime * 0.05 + uScroll * 0.5));
         float noiseB = cnoise(vec3(pos.x * 0.7 - uTime * 0.15, pos.y * 0.7 + uTime * 0.1, uTime * 0.1)) * 0.5;
         
         // Mouse interaction wave
-        float distToMouse = distance(pos.xy, uMouse * 4.0);
-        float mouseWave = sin(distToMouse * 2.0 - uTime * 3.0) * exp(-distToMouse * 0.6) * 0.6;
+        float distToMouse = distance(pos.xy, uMouse * 4.2);
+        float mouseWave = sin(distToMouse * 2.2 - uTime * 3.2) * exp(-distToMouse * 0.55) * 0.65;
 
         float elevation = noiseA + noiseB + mouseWave;
-        pos.z += elevation * 0.85;
+        pos.z += elevation * 0.9;
 
         vElevation = elevation;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
@@ -132,6 +134,7 @@ export default function Mesh3DCanvas() {
 
     const fragmentShader = `
       uniform float uTime;
+      uniform float uScroll;
       varying vec2 vUv;
       varying float vElevation;
       varying vec3 vNormal;
@@ -152,24 +155,25 @@ export default function Mesh3DCanvas() {
         
         // Subtle iridescent chromatic shift on crests
         float rim = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.5);
-        finalColor += colorWarm * rim * 0.35;
+        finalColor += colorWarm * rim * 0.38;
 
-        // Subtle wireframe grid lines for the architectural / technical feel
+        // Subtle wireframe grid lines for technical architecture depth
         vec2 grid = abs(fract(vUv * 36.0 - 0.5) - 0.5) / fwidth(vUv * 36.0);
         float line = min(grid.x, grid.y);
         float gridAlpha = 1.0 - min(line, 1.0);
-        finalColor += vec3(0.2, 0.3, 0.6) * gridAlpha * 0.12;
+        finalColor += vec3(0.25, 0.35, 0.7) * gridAlpha * 0.12;
 
-        gl_FragColor = vec4(finalColor, 0.94);
+        gl_FragColor = vec4(finalColor, 0.95);
       }
     `;
 
     const uniforms = {
       uTime: { value: 0 },
       uMouse: { value: new THREE.Vector2(0, 0) },
+      uScroll: { value: 0 },
     };
 
-    const geometry = new THREE.PlaneGeometry(16, 11, 128, 128);
+    const geometry = new THREE.PlaneGeometry(17, 12, 128, 128);
     const material = new THREE.ShaderMaterial({
       vertexShader,
       fragmentShader,
@@ -184,13 +188,13 @@ export default function Mesh3DCanvas() {
     mesh.position.y = -0.5;
     scene.add(mesh);
 
-    // Additional floating subtle particle stars for depth
+    // Subtle star dust particles
     const particleCount = 180;
     const particleGeometry = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
     for (let i = 0; i < particleCount * 3; i += 3) {
-      positions[i] = (Math.random() - 0.5) * 14;
-      positions[i + 1] = (Math.random() - 0.5) * 10;
+      positions[i] = (Math.random() - 0.5) * 15;
+      positions[i + 1] = (Math.random() - 0.5) * 11;
       positions[i + 2] = (Math.random() - 0.5) * 6;
     }
     particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -205,13 +209,18 @@ export default function Mesh3DCanvas() {
 
     // Mouse Tracking with smooth interpolation
     let mouse = { x: 0, y: 0, targetX: 0, targetY: 0 };
-
     const handleMouseMove = (e) => {
       mouse.targetX = (e.clientX / window.innerWidth) * 2 - 1;
       mouse.targetY = -(e.clientY / window.innerHeight) * 2 + 1;
     };
-
     window.addEventListener('mousemove', handleMouseMove);
+
+    // Scroll Tracking with inertia
+    let scroll = { current: 0, target: 0 };
+    const handleScroll = () => {
+      scroll.target = window.scrollY;
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
 
     // Handle Window Resize
     const handleResize = () => {
@@ -219,7 +228,6 @@ export default function Mesh3DCanvas() {
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     };
-
     window.addEventListener('resize', handleResize);
 
     // Animation Loop
@@ -232,14 +240,25 @@ export default function Mesh3DCanvas() {
       const elapsedTime = clock.getElapsedTime();
       uniforms.uTime.value = elapsedTime;
 
-      // Inertia smoothing
-      mouse.x += (mouse.targetX - mouse.x) * 0.04;
-      mouse.y += (mouse.targetY - mouse.y) * 0.04;
+      // Inertia smoothing for mouse
+      mouse.x += (mouse.targetX - mouse.x) * 0.045;
+      mouse.y += (mouse.targetY - mouse.y) * 0.045;
       uniforms.uMouse.value.set(mouse.x, mouse.y);
 
+      // Inertia smoothing for scroll
+      scroll.current += (scroll.target - scroll.current) * 0.045;
+      const docHeight = Math.max(document.body.scrollHeight - window.innerHeight, 1);
+      const scrollRatio = Math.min(Math.max(scroll.current / docHeight, 0), 1);
+      uniforms.uScroll.value = scrollRatio;
+
+      // Fluid parallax shift based on scroll
+      mesh.position.y = -0.5 + scrollRatio * 1.6;
+      mesh.rotation.x = -Math.PI * 0.18 - scrollRatio * 0.2;
+      camera.position.z = 7.5 - scrollRatio * 1.2;
+
       // Subtle scene tilt following cursor
-      scene.rotation.y = mouse.x * 0.08;
-      scene.rotation.x = -mouse.y * 0.05;
+      scene.rotation.y = mouse.x * 0.07;
+      scene.rotation.x = -mouse.y * 0.04;
 
       particles.rotation.y = elapsedTime * 0.015;
 
@@ -251,6 +270,7 @@ export default function Mesh3DCanvas() {
     return () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
       if (container && renderer.domElement) {
         container.removeChild(renderer.domElement);
@@ -267,7 +287,7 @@ export default function Mesh3DCanvas() {
     <div
       ref={containerRef}
       className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
-      style={{ opacity: 0.9 }}
+      style={{ opacity: 0.92 }}
     />
   );
 }
